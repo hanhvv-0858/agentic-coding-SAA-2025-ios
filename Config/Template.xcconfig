@@ -1,0 +1,37 @@
+// =============================================================================
+// AIDD-SAA-2025 — xcconfig template
+// =============================================================================
+// Copy this file to Dev.xcconfig / Staging.xcconfig / Prod.xcconfig and fill
+// in the real values. NEVER commit a populated xcconfig — only this template
+// is checked in. The .gitignore excludes Dev/Staging/Prod.
+//
+// After populating, set the build configuration's Configuration Settings File
+// to the matching .xcconfig in Project → Info → Configurations.
+//
+// Constitution V (Secure-by-Default): NEVER place SUPABASE_SERVICE_ROLE here.
+// Only the anon key is safe to bundle.
+// =============================================================================
+
+// ── Supabase ──────────────────────────────────────────────────────────────────
+SUPABASE_URL = https:/$()/REPLACE_ME.supabase.co
+SUPABASE_ANON_KEY = REPLACE_ME
+
+// ── Auth allowlist ────────────────────────────────────────────────────────────
+// Space-separated list of allowed email domains. iOS reads this from
+// Info.plist as a single string and splits at runtime.
+// Examples:
+//   sun-asterisk.com
+//   sun-asterisk.com gmail.com    (non-prod only)
+ALLOWED_EMAIL_DOMAINS = sun-asterisk.com
+
+// ── Event metadata (Home countdown) ───────────────────────────────────────────
+// ISO8601 timestamp of the SAA 2025 event. Bundled because copy is static
+// per Thể lệ.
+EVENT_TARGET_DATE = 2025-12-26T19:00:00+07:00
+EVENT_PLACE = Au Co Art Center
+LIVE_STREAM_URL = https:/$()/www.facebook.com/groups/sun.family
+
+// ── OAuth callback ────────────────────────────────────────────────────────────
+// Custom URL scheme registered in Info.plist CFBundleURLTypes. The
+// `://auth-callback` suffix is the path Supabase redirects to.
+OAUTH_REDIRECT_URL = aidd-saa-2025:/$()/auth-callback

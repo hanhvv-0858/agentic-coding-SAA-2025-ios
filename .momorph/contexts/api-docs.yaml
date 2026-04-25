@@ -1,0 +1,1412 @@
+openapi: 3.0.3
+info:
+  title: Sun* Annual Awards 2025 — iOS Client API Contract
+  description: |
+    Client-facing contract for the Sun* Annual Awards 2025 iOS app.
+
+    The backend is **Supabase** (Postgres + PostgREST + Auth + Realtime + Storage).
+    There is no bespoke Node server. This document catalogues **what the iOS
+    client calls** — it is not an exhaustive description of every operation
+    PostgREST auto-exposes from the schema. Capabilities not listed here are
+    either admin/service-role or intentionally unused by the client.
+
+    ## Surface map
+
+    | Surface | Base path | Auth |
+    |--------|-----------|------|
+    | Supabase Auth (OAuth + session) | `/auth/v1/*` | Anon key on bootstrap; bearer JWT after |
+    | PostgREST tables/views | `/rest/v1/{relation}` | Bearer JWT required; RLS-gated |
+    | PostgREST RPCs (server-authoritative) | `/rest/v1/rpc/{function_name}` | Bearer JWT required |
+    | Storage (private bucket) | `/storage/v1/object/kudo-images/*` | Bearer JWT required |
+    | Realtime (WebSocket) | `/realtime/v1/websocket` | Bearer JWT required |
+
+    ## Headers (all REST endpoints)
+
+    Every authenticated request MUST send:
+
+    ```
+    Authorization: Bearer <access_token>
+    apikey: <SUPABASE_ANON_KEY>
+    ```
+
+    PostgREST-specific headers:
+
+    ```
+    Prefer: return=representation          # include row(s) in response
+    Prefer: count=exact                    # include exact row count
+    Prefer: resolution=ignore-duplicates   # for ON CONFLICT DO NOTHING
+    ```
+
+    ## Principles enforced
+
+    - **Anonymity redaction**: all kudos reads MUST go through
+      `/rest/v1/kudos_feed` (or `/rest/v1/kudos_with_stats`). Direct
+      `/rest/v1/kudos` is revoked for `authenticated`.
+    - **Secret Box reveal**: client MUST call the RPC
+      `/rest/v1/rpc/open_secret_box` — direct UPDATE is revoked.
+    - **Kudo composition**: client MUST call
+      `/rest/v1/rpc/create_kudo` (atomic transaction across kudos +
+      recipients + hashtags + images).
+    - **Never bundle the service-role key** in the iOS binary
+      (Principle V of the project constitution).
+
+  version: 1.0.0
+  contact:
+    name: Sun* SAA 2025 Backend
+    url: https://sun-asterisk.com
+  license:
+    name: Internal
+
+servers:
+  - url: https://dev.supabase.co
+    description: Development Supabase project
+  - url: https://staging.supabase.co
+    description: Staging Supabase project
+  - url: https://prod.supabase.co
+    description: Production Supabase project
+
+tags:
+  - name: Auth
+    description: Supabase Auth — Google SSO sign-in, session, sign-out.
+  - name: Profiles
+    description: Read profiles for header, search, and profile screens.
+  - name: Kudos
+    description: Compose / read / delete / react to kudos.
+  - name: KudoAuxiliary
+    description: Supporting relations — hashtags, images, hearts, moderation.
+  - name: SecretBox
+    description: Gift/prize reveal flow — server-authoritative.
+  - name: Notifications
+    description: Notification inbox + mark-read.
+  - name: Awards
+    description: Award catalogue (6 canonical kinds).
+  - name: Departments
+    description: Department registry (for profile cards + filters).
+  - name: Storage
+    description: Kudo image attachments via Supabase Storage.
+  - name: Realtime
+    description: WebSocket channels for live updates.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECURITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Supabase access token acquired via Google OAuth. Stored in iOS
+        Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+    apiKey:
+      type: apiKey
+      in: header
+      name: apikey
+      description: |
+        Supabase anon key. Public; may be bundled in the iOS binary.
+        MUST NOT ship the service-role key.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REUSABLE PARAMETERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+  parameters:
+    AcceptProfile:
+      name: Accept-Profile
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: [public]
+        default: public
+      description: PostgREST schema selector.
+
+    PreferReturn:
+      name: Prefer
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - return=minimal
+          - return=representation
+          - count=exact
+          - resolution=merge-duplicates
+          - resolution=ignore-duplicates
+      description: PostgREST request hints. Multiple values comma-separated.
+
+    RangeHeader:
+      name: Range
+      in: header
+      required: false
+      schema:
+        type: string
+      description: |
+        PostgREST pagination. Example: `0-19` returns the first 20 rows.
+
+    SelectParam:
+      name: select
+      in: query
+      required: false
+      schema:
+        type: string
+      description: |
+        PostgREST column projection. Example: `id,title,body` or
+        `*,recipient:profiles(*)` for embedded resources.
+
+    OrderParam:
+      name: order
+      in: query
+      required: false
+      schema:
+        type: string
+      description: |
+        PostgREST ORDER BY. Example: `created_at.desc`.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REUSABLE RESPONSES
+# ─────────────────────────────────────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PostgrestError'
+          example:
+            code: '401'
+            message: 'JWT expired'
+
+    Forbidden:
+      description: RLS denied the operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PostgrestError'
+          example:
+            code: '42501'
+            message: 'new row violates row-level security policy'
+
+    NotFound:
+      description: Row not found, or hidden by RLS / view filter.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PostgrestError'
+          example:
+            code: 'PGRST116'
+            message: 'JSON object requested, multiple (or no) rows returned'
+
+    ValidationError:
+      description: CHECK constraint or explicit RAISE EXCEPTION.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PostgrestError'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCHEMAS — shared entity shapes (mirror database-schema.sql)
+# ─────────────────────────────────────────────────────────────────────────────
+
+  schemas:
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
+
+    GoogleOAuthResponse:
+      type: object
+      required: [provider, url]
+      properties:
+        provider:
+          type: string
+          enum: [google]
+        url:
+          type: string
+          format: uri
+          description: |
+            Authorisation URL — open in `ASWebAuthenticationSession`.
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, token_type, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+          description: Seconds until expiry.
+        token_type:
+          type: string
+          enum: [bearer]
+        user:
+          $ref: '#/components/schemas/AuthUser'
+
+    AuthUser:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        user_metadata:
+          type: object
+          additionalProperties: true
+
+    # ── Enums ────────────────────────────────────────────────────────────────
+
+    HonourTitle:
+      type: string
+      enum: [New Hero, Rising Hero, Super Hero, Legend Hero]
+
+    KudoStatus:
+      type: string
+      enum: [active, soft_hidden, spam]
+
+    BadgeKind:
+      type: string
+      enum:
+        - revival
+        - touch_of_light
+        - stay_gold
+        - flow_to_horizon
+        - beyond_the_boundary
+        - root_further
+
+    NotificationType:
+      type: string
+      enum:
+        - kudos_received
+        - kudos_liked
+        - secret_box_granted
+        - level_up
+        - content_soft_hidden
+        - badge_collected
+        - admin_review_request
+
+    AwardKind:
+      type: string
+      enum:
+        - mvp
+        - best_manager
+        - signature_creator
+        - top_project
+        - top_project_leader
+        - top_talent
+
+    # ── Core entities ────────────────────────────────────────────────────────
+
+    Department:
+      type: object
+      required: [id, code, name_vi, name_en, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name_vi:
+          type: string
+        name_en:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Profile:
+      type: object
+      required: [id, email, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        department_id:
+          type: string
+          format: uuid
+          nullable: true
+        honour_title:
+          allOf:
+            - $ref: '#/components/schemas/HonourTitle'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Hashtag:
+      type: object
+      required: [id, slug, label_vi, label_en]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        label_vi:
+          type: string
+        label_en:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    KudoFeedRow:
+      type: object
+      description: |
+        Row returned from `public.kudos_feed`. `sender_id` is NULL-masked
+        when `is_anonymous = true` AND the viewer is not the author.
+      required: [id, body, is_anonymous, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          nullable: true
+        body:
+          type: string
+        is_anonymous:
+          type: boolean
+        anonymous_alias:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/KudoStatus'
+        sender_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: NULL when `is_anonymous=true` AND viewer ≠ author.
+        created_at:
+          type: string
+          format: date-time
+
+    KudoWithStats:
+      allOf:
+        - $ref: '#/components/schemas/KudoFeedRow'
+        - type: object
+          required: [hearts_count]
+          properties:
+            hearts_count:
+              type: integer
+              minimum: 0
+
+    KudoRecipient:
+      type: object
+      required: [kudo_id, recipient_id]
+      properties:
+        kudo_id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+
+    KudoImage:
+      type: object
+      required: [id, kudo_id, url, position, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kudo_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          description: Storage object path (sign at render time).
+        position:
+          type: integer
+          minimum: 0
+          maximum: 4
+        created_at:
+          type: string
+          format: date-time
+
+    KudoHeart:
+      type: object
+      required: [kudo_id, user_id, created_at]
+      properties:
+        kudo_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    KudoReport:
+      type: object
+      required: [kudo_id, reporter_id, reason_slug]
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        kudo_id:
+          type: string
+          format: uuid
+        reporter_id:
+          type: string
+          format: uuid
+        reason_slug:
+          type: string
+          description: |
+            Recommended values: one of the `KudosSpamCriterion` slugs
+            (profanity, politics_religion_discrimination,
+            specific_business_data, external_org_names, personal_info,
+            repeated_similar_messages, too_short, bulk_send,
+            empty_punctuation, unusual_heart_spike).
+        note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # ── Notifications ────────────────────────────────────────────────────────
+
+    Notification:
+      type: object
+      required: [id, recipient_id, type, payload, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipient_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/NotificationPayloadKudosReceived'
+            - $ref: '#/components/schemas/NotificationPayloadKudosLiked'
+            - $ref: '#/components/schemas/NotificationPayloadSecretBoxGranted'
+            - $ref: '#/components/schemas/NotificationPayloadLevelUp'
+            - $ref: '#/components/schemas/NotificationPayloadContentSoftHidden'
+            - $ref: '#/components/schemas/NotificationPayloadBadgeCollected'
+            - type: object
+              description: admin_review_request — backend-driven shape
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationPayloadKudosReceived:
+      type: object
+      required: [kudo_id]
+      properties:
+        kudo_id:
+          type: string
+          format: uuid
+
+    NotificationPayloadKudosLiked:
+      type: object
+      required: [kudo_id, liker_id]
+      properties:
+        kudo_id:
+          type: string
+          format: uuid
+        liker_id:
+          type: string
+          format: uuid
+
+    NotificationPayloadSecretBoxGranted:
+      type: object
+      required: [secret_box_id]
+      properties:
+        secret_box_id:
+          type: string
+          format: uuid
+
+    NotificationPayloadLevelUp:
+      type: object
+      required: [from_title, to_title]
+      properties:
+        from_title:
+          $ref: '#/components/schemas/HonourTitle'
+        to_title:
+          $ref: '#/components/schemas/HonourTitle'
+
+    NotificationPayloadContentSoftHidden:
+      type: object
+      required: [kudo_id]
+      properties:
+        kudo_id:
+          type: string
+          format: uuid
+
+    NotificationPayloadBadgeCollected:
+      type: object
+      required: [gift_redemption_id, gift_name]
+      properties:
+        gift_redemption_id:
+          type: string
+          format: uuid
+        gift_name:
+          type: string
+        quantity:
+          type: integer
+        source:
+          type: string
+
+    # ── Awards ───────────────────────────────────────────────────────────────
+
+    Award:
+      type: object
+      required:
+        - kind
+        - title_vi
+        - title_en
+        - description_vi
+        - description_en
+        - artwork_asset_key
+        - display_order
+      properties:
+        kind:
+          $ref: '#/components/schemas/AwardKind'
+        title_vi:
+          type: string
+        title_en:
+          type: string
+        description_vi:
+          type: string
+        description_en:
+          type: string
+        artwork_asset_key:
+          type: string
+        display_order:
+          type: integer
+
+    # ── Secret Box ───────────────────────────────────────────────────────────
+
+    SecretBox:
+      type: object
+      required: [id, user_id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        opened_at:
+          type: string
+          format: date-time
+          nullable: true
+        prize_type:
+          type: string
+          enum: [badge, physical]
+          nullable: true
+        badge_kind:
+          allOf:
+            - $ref: '#/components/schemas/BadgeKind'
+          nullable: true
+        prize_name:
+          type: string
+          nullable: true
+        prize_asset_key:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ── RPC request bodies ───────────────────────────────────────────────────
+
+    CreateKudoRequest:
+      type: object
+      required:
+        - p_title
+        - p_body
+        - p_is_anonymous
+        - p_recipient_id
+        - p_hashtag_slugs
+        - p_image_paths
+      properties:
+        p_title:
+          type: string
+          minLength: 3
+          maxLength: 80
+        p_body:
+          type: string
+          minLength: 30
+          maxLength: 2000
+        p_is_anonymous:
+          type: boolean
+        p_recipient_id:
+          type: string
+          format: uuid
+        p_hashtag_slugs:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 5
+        p_image_paths:
+          type: array
+          items:
+            type: string
+            description: Storage object path after upload.
+          maxItems: 5
+          nullable: true
+        p_anonymous_alias:
+          type: string
+          minLength: 2
+          maxLength: 40
+          nullable: true
+          description: Required iff `p_is_anonymous = true`.
+
+    # ── Error ────────────────────────────────────────────────────────────────
+
+    PostgrestError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: string
+          nullable: true
+        hint:
+          type: string
+          nullable: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # ENDPOINT GROUPS
+  # ───────────────────────────────────────────────────────────────────────────
+
+security:
+  - bearerAuth: []
+    apiKey: []
+
+paths:
+
+  # ─── Auth ─────────────────────────────────────────────────────────────────
+
+  /auth/v1/authorize:
+    get:
+      tags: [Auth]
+      summary: Start Google OAuth flow
+      operationId: authorize
+      security:
+        - apiKey: []
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          schema: { type: string, enum: [google] }
+        - name: redirect_to
+          in: query
+          required: true
+          schema: { type: string, format: uri }
+          description: Custom URL scheme (e.g. `app://auth-callback`).
+      responses:
+        '200':
+          description: Authorisation URL returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoogleOAuthResponse' }
+
+  /auth/v1/token:
+    post:
+      tags: [Auth]
+      summary: Exchange OAuth code for a session (PKCE)
+      operationId: exchangeToken
+      security:
+        - apiKey: []
+      parameters:
+        - name: grant_type
+          in: query
+          required: true
+          schema: { type: string, enum: [pkce, refresh_token] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Fresh session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/v1/user:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthUser' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/v1/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke session
+      operationId: logout
+      responses:
+        '204':
+          description: Signed out.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── Profiles ─────────────────────────────────────────────────────────────
+
+  /rest/v1/profiles:
+    get:
+      tags: [Profiles]
+      summary: List / search profiles
+      description: |
+        Used by Search Sunner (`ilike`) and the RecipientPickerSheet.
+        See §§0027 for the trigram index on `display_name`.
+      operationId: listProfiles
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: display_name
+          in: query
+          description: 'Example: `ilike.%q%`'
+          schema: { type: string }
+        - name: user_id
+          in: query
+          description: 'Example: `neq.<selfUid>` to exclude self.'
+          schema: { type: string }
+        - name: id
+          in: query
+          description: 'Example: `eq.<uuid>` for by-id lookup.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: List of profiles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Profile' }
+
+  # ─── Kudos feed (anonymity-redacted view) ─────────────────────────────────
+
+  /rest/v1/kudos_feed:
+    get:
+      tags: [Kudos]
+      summary: Read kudos through the anonymity-redacted view
+      description: |
+        The ONLY client-visible surface for kudo content. Direct SELECT on
+        `/rest/v1/kudos` is revoked for `authenticated`. When `is_anonymous`
+        is `true` AND the viewer is not the author, `sender_id` is returned
+        as `null`. Soft-hidden kudos are excluded unless the viewer is the
+        author.
+      operationId: listKudosFeed
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, soft_hidden, spam] }
+        - name: sender_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: Rows from `public.kudos_feed`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KudoFeedRow' }
+
+  /rest/v1/kudos_with_stats:
+    get:
+      tags: [Kudos]
+      summary: Kudos feed with precomputed hearts_count
+      operationId: listKudosWithStats
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: id
+          in: query
+          schema: { type: string }
+        - name: sender_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: Kudos with hearts_count.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KudoWithStats' }
+
+  /rest/v1/kudos:
+    delete:
+      tags: [Kudos]
+      summary: Delete a kudo (author-only)
+      description: |
+        Allowed by RLS only when `sender_id = auth.uid()` (see migration
+        0028). SELECT / UPDATE / INSERT on this endpoint are NOT allowed
+        for clients.
+      operationId: deleteKudo
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: string }
+          description: 'Example: `eq.<uuid>`'
+      responses:
+        '204':
+          description: Deleted.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── Kudo auxiliary relations ─────────────────────────────────────────────
+
+  /rest/v1/kudo_recipients:
+    get:
+      tags: [KudoAuxiliary]
+      summary: Junction — kudo_id ↔ recipient_id
+      description: |
+        Anonymous kudos are visible here only to the author, the recipient,
+        or when `is_anonymous = false` (see 0022).
+      operationId: listKudoRecipients
+      parameters:
+        - name: kudo_id
+          in: query
+          schema: { type: string }
+        - name: recipient_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Junction rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KudoRecipient' }
+
+  /rest/v1/kudo_hashtags:
+    get:
+      tags: [KudoAuxiliary]
+      summary: Kudo ↔ hashtag junction
+      operationId: listKudoHashtags
+      parameters:
+        - name: kudo_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Junction rows.
+
+  /rest/v1/kudo_images:
+    get:
+      tags: [KudoAuxiliary]
+      summary: List images for a kudo
+      operationId: listKudoImages
+      parameters:
+        - name: kudo_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+      responses:
+        '200':
+          description: Images (≤ 5 per kudo).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KudoImage' }
+
+  /rest/v1/kudo_hearts:
+    get:
+      tags: [KudoAuxiliary]
+      summary: List hearts (for aggregation / has-liked check)
+      operationId: listKudoHearts
+      parameters:
+        - name: kudo_id
+          in: query
+          schema: { type: string }
+        - name: user_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Heart rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KudoHeart' }
+    post:
+      tags: [KudoAuxiliary]
+      summary: Like a kudo
+      description: |
+        Insert with `Prefer: resolution=ignore-duplicates` to make the
+        operation idempotent (toggle-on). RLS enforces `user_id = auth.uid()`.
+      operationId: likeKudo
+      parameters:
+        - $ref: '#/components/parameters/PreferReturn'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kudo_id, user_id]
+              properties:
+                kudo_id: { type: string, format: uuid }
+                user_id:
+                  type: string
+                  format: uuid
+                  description: MUST equal `auth.uid()` (RLS-enforced).
+      responses:
+        '201':
+          description: Like recorded (or no-op on duplicate).
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [KudoAuxiliary]
+      summary: Unlike a kudo
+      operationId: unlikeKudo
+      parameters:
+        - name: kudo_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: 'Example: `eq.<uuid>`'
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+          description: 'MUST match `auth.uid()`.'
+      responses:
+        '204':
+          description: Unliked.
+
+  /rest/v1/kudo_reports:
+    post:
+      tags: [KudoAuxiliary]
+      summary: Report a kudo
+      description: |
+        Allowed only when the reporter is not the author of the reported
+        kudo. UNIQUE on `(reporter_id, kudo_id)` — cannot report same kudo
+        twice.
+      operationId: reportKudo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kudo_id, reporter_id, reason_slug]
+              properties:
+                kudo_id: { type: string, format: uuid }
+                reporter_id:
+                  type: string
+                  format: uuid
+                  description: MUST equal `auth.uid()`.
+                reason_slug: { type: string }
+                note:
+                  type: string
+                  nullable: true
+      responses:
+        '201':
+          description: Report recorded.
+        '409':
+          description: Duplicate report for same kudo.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── RPCs ─────────────────────────────────────────────────────────────────
+
+  /rest/v1/rpc/create_kudo:
+    post:
+      tags: [Kudos]
+      summary: Compose a kudo (atomic)
+      description: |
+        SECURITY DEFINER. Validates inputs server-side and writes atomically
+        to `kudos` + `kudo_recipients` + `kudo_hashtags` + `kudo_images`.
+        Hard-codes `sender_id = auth.uid()` (cannot be spoofed).
+
+        Raises `RAISE EXCEPTION` on:
+          * Not authenticated.
+          * Title empty / body empty / body < 30 chars (via 0026 CHECK).
+          * Missing recipient.
+          * < 1 or > 5 hashtags.
+          * > 5 images.
+          * `is_anonymous=true` with alias outside `2..40` chars.
+      operationId: createKudo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateKudoRequest' }
+      responses:
+        '200':
+          description: Returns new kudo UUID as a scalar string.
+          content:
+            application/json:
+              schema:
+                type: string
+                format: uuid
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /rest/v1/rpc/open_secret_box:
+    post:
+      tags: [SecretBox]
+      summary: Open next unopened Secret Box (server-authoritative)
+      description: |
+        SECURITY DEFINER. Locks the oldest unopened box for the caller
+        (FOR UPDATE SKIP LOCKED), assigns a random `badge_kind` as a
+        `badge` prize, sets `opened_at`, returns the updated row.
+
+        Raises `RAISE EXCEPTION`:
+          * `open_secret_box: not authenticated`.
+          * `open_secret_box: no_unopened_box_for_user`.
+      operationId: openSecretBox
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Opened box with prize fields.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretBox' }
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ─── Secret Boxes ────────────────────────────────────────────────────────
+
+  /rest/v1/secret_boxes:
+    get:
+      tags: [SecretBox]
+      summary: List caller's boxes
+      description: |
+        RLS restricts rows to `user_id = auth.uid()`. Use `opened_at=is.null`
+        for the unopened count (Home stats + Profile dashboard).
+      operationId: listSecretBoxes
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: opened_at
+          in: query
+          description: 'Example: `is.null` to filter unopened.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/PreferReturn'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: Caller's boxes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SecretBox' }
+          headers:
+            Content-Range:
+              schema: { type: string }
+              description: 'e.g. `0-4/5` (count=exact).'
+
+  # ─── Notifications ────────────────────────────────────────────────────────
+
+  /rest/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List caller's notifications
+      operationId: listNotifications
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: recipient_id
+          in: query
+          schema: { type: string }
+          description: 'MUST equal `eq.<selfUid>` (RLS).'
+        - name: read_at
+          in: query
+          schema: { type: string }
+          description: 'Example: `is.null` for unread filter.'
+        - name: type
+          in: query
+          schema: { type: string }
+          description: 'Example: `neq.admin_review_request` for non-admin clients.'
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/PreferReturn'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: Notifications.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Notification' }
+          headers:
+            Content-Range:
+              schema: { type: string }
+    patch:
+      tags: [Notifications]
+      summary: Mark notification(s) as read
+      description: |
+        Only `read_at` may be updated (other columns are silently ignored
+        by PostgREST, but RLS `WITH CHECK` still gates this). To
+        mark-all-read, use `PATCH /rest/v1/notifications?read_at=is.null`.
+      operationId: markNotificationsRead
+      parameters:
+        - name: id
+          in: query
+          schema: { type: string }
+          description: 'Example: `eq.<uuid>` for single row.'
+        - name: read_at
+          in: query
+          schema: { type: string }
+          description: 'Example: `is.null` to mark all unread as read.'
+        - $ref: '#/components/parameters/PreferReturn'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [read_at]
+              properties:
+                read_at:
+                  type: string
+                  format: date-time
+      responses:
+        '204':
+          description: Updated.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── Awards ───────────────────────────────────────────────────────────────
+
+  /rest/v1/awards:
+    get:
+      tags: [Awards]
+      summary: List awards catalogue
+      operationId: listAwards
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: kind
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+        - $ref: '#/components/parameters/RangeHeader'
+      responses:
+        '200':
+          description: Awards.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Award' }
+
+  # ─── Hashtags ─────────────────────────────────────────────────────────────
+
+  /rest/v1/hashtags:
+    get:
+      tags: [KudoAuxiliary]
+      summary: List hashtags catalogue
+      operationId: listHashtags
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - name: slug
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/OrderParam'
+      responses:
+        '200':
+          description: Hashtags.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Hashtag' }
+
+  # ─── Departments ──────────────────────────────────────────────────────────
+
+  /rest/v1/departments:
+    get:
+      tags: [Departments]
+      summary: List departments catalogue
+      operationId: listDepartments
+      parameters:
+        - $ref: '#/components/parameters/SelectParam'
+        - $ref: '#/components/parameters/OrderParam'
+      responses:
+        '200':
+          description: Departments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Department' }
+
+  # ─── Storage (kudo-images bucket) ─────────────────────────────────────────
+
+  /storage/v1/object/kudo-images/{path}:
+    post:
+      tags: [Storage]
+      summary: Upload a kudo image
+      description: |
+        Bucket is **private** with 5 MB limit and MIME allow-list
+        [`image/jpeg`, `image/png`, `image/webp`]. iOS clients MUST
+        convert HEIC → JPEG before upload. `owner = auth.uid()` enforced
+        by policy.
+      operationId: uploadKudoImage
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+          description: 'Path within the bucket — recommend `{uid}/{uuid}.jpg`.'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Uploaded. Returns object path.
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /storage/v1/object/sign/kudo-images/{path}:
+    post:
+      tags: [Storage]
+      summary: Generate a signed URL for a kudo image
+      description: |
+        Required because the bucket is private. Use this when rendering
+        thumbnails or full-screen images.
+      operationId: signKudoImage
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiresIn:
+                  type: integer
+                  description: Seconds until the signed URL expires.
+                  default: 3600
+      responses:
+        '200':
+          description: Signed URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signedURL:
+                    type: string
+                    format: uri
+
+  /storage/v1/object/kudo-images/{path}/delete:
+    delete:
+      tags: [Storage]
+      summary: Delete a kudo image
+      description: Only the original uploader may delete (owner policy).
+      operationId: deleteKudoImage
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ─── Realtime (WebSocket — documented as a pseudo-endpoint) ───────────────
+
+  /realtime/v1/websocket:
+    get:
+      tags: [Realtime]
+      summary: Supabase Realtime WebSocket channel
+      description: |
+        Protocol: Supabase Realtime v2 — Phoenix Channels over WebSocket.
+        Authenticated with the same bearer JWT.
+
+        Tables exposed via the `supabase_realtime` publication (per
+        migration 0024):
+
+        | Table | Used by |
+        |-------|---------|
+        | `public.notifications` | Home bell + Notifications inbox |
+        | `public.kudos` | Sun*Kudos live ticker + All Kudos prepend |
+        | `public.kudo_hearts` | Sun*Kudos heart animation + live counter |
+
+        Example subscription topic:
+
+        ```
+        realtime:public:notifications:recipient_id=eq.<uid>
+        ```
+
+        Payloads are standard Realtime diff messages (INSERT/UPDATE/DELETE).
+      operationId: realtimeConnect
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgraded).
+        '401':
+          $ref: '#/components/responses/Unauthorized'

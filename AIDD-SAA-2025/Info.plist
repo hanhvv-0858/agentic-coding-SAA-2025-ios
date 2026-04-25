@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ALLOWED_EMAIL_DOMAINS</key>
+	<string>$(ALLOWED_EMAIL_DOMAINS)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.sun-asterisk.aidd-saa-2025.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>aidd-saa-2025</string>
+			</array>
+		</dict>
+	</array>
+	<key>EVENT_PLACE</key>
+	<string>$(EVENT_PLACE)</string>
+	<key>EVENT_TARGET_DATE</key>
+	<string>$(EVENT_TARGET_DATE)</string>
+	<key>LIVE_STREAM_URL</key>
+	<string>$(LIVE_STREAM_URL)</string>
+	<key>OAUTH_REDIRECT_URL</key>
+	<string>$(OAUTH_REDIRECT_URL)</string>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>$(SUPABASE_ANON_KEY)</string>
+	<key>SUPABASE_URL</key>
+	<string>$(SUPABASE_URL)</string>
+</dict>
+</plist>

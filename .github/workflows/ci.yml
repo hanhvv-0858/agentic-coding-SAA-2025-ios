@@ -1,0 +1,117 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE_VERSION: "15.4"
+  SCHEME: "AIDD-SAA-2025"
+  IOS_SIMULATOR: "iPhone 15"
+  IOS_VERSION: "17.4"
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -switch /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Stage placeholder xcconfig (CI does not need real secrets to build)
+        run: |
+          cp Config/Template.xcconfig Config/Dev.xcconfig
+          cp Config/Template.xcconfig Config/Staging.xcconfig
+          cp Config/Template.xcconfig Config/Prod.xcconfig
+
+      - name: Resolve SwiftPM dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project AIDD-SAA-2025.xcodeproj \
+            -scheme "${SCHEME}"
+
+      - name: Build (Debug)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AIDD-SAA-2025.xcodeproj \
+            -scheme "${SCHEME}" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=${IOS_SIMULATOR},OS=${IOS_VERSION}" \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project AIDD-SAA-2025.xcodeproj \
+            -scheme "${SCHEME}" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=${IOS_SIMULATOR},OS=${IOS_VERSION}" \
+            CODE_SIGNING_ALLOWED=NO \
+            -enableCodeCoverage YES \
+            | xcbeautify
+
+      - name: Build (Release, code-signing-disabled)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AIDD-SAA-2025.xcodeproj \
+            -scheme "${SCHEME}" \
+            -configuration Release \
+            -destination "platform=iOS Simulator,name=${IOS_SIMULATOR},OS=${IOS_VERSION}" \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify
+
+  swiftlint:
+    name: SwiftLint
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint (warnings fail CI)
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  secrets-check:
+    name: Secrets check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure no service-role key is committed
+        run: |
+          if grep -RInE "SUPABASE_SERVICE_ROLE_?KEY|service_role[^_]" \
+               --include="*.swift" --include="*.xcconfig" --include="*.plist" \
+               --include="*.yml" --include="*.yaml" --include="*.md" .; then
+            echo "❌ Service-role reference found in committed sources."
+            exit 1
+          fi
+          echo "✅ No service-role references found."
+
+      - name: Ensure populated xcconfig is not committed
+        run: |
+          for f in Config/Dev.xcconfig Config/Staging.xcconfig Config/Prod.xcconfig; do
+            if [ -f "$f" ] && ! git check-ignore -q "$f"; then
+              echo "❌ $f is committed but should be gitignored."
+              exit 1
+            fi
+          done
+          echo "✅ Real xcconfig files are gitignored."

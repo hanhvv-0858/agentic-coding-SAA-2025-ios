@@ -1,0 +1,57 @@
+# momorph
+.mcp.json
+mcp.json
+
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+!default.pbxuser
+!default.mode1v3
+!default.mode2v3
+!default.perspectivev3
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# CocoaPods (not used — gitignore defensively)
+Pods/
+
+# Carthage (not used)
+Carthage/Build/
+
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Code coverage
+*.gcno
+*.gcda
+
+# Secrets — real xcconfig values (only Template.xcconfig is committed)
+Config/Dev.xcconfig
+Config/Staging.xcconfig
+Config/Prod.xcconfig
+*.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
