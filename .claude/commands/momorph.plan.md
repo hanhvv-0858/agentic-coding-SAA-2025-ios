@@ -25,8 +25,14 @@ Read and follow the template structure exactly.
 Before planning, ensure these exist:
 - `.momorph/constitution.md` - Project standards
 - `.momorph/specs/{screenId}-{screen_name}/spec.md` - Feature specification (what to build)
-- `.momorph/specs/{screenId}-{screen_name}/design-style.md` - Design specifications (how it looks - IMPORTANT)
-- `.momorph/contexts/BACKEND_API_TESTCASES.md` - Backend API test cases
+- `.momorph/contexts/BACKEND_API_TESTCASES.md` - Backend API test cases (if backend work is in scope)
+
+**Note on visual specs**: This project uses a **behavior-first** workflow.
+`design-style.md` is intentionally NOT generated. Visual details (colors,
+typography, spacing, layout values, asset binaries) are fetched on demand
+at implementation time via `query_section` / `get_node_context` /
+`get_media_files` against the live Figma file. The plan should reference
+Figma Node IDs (already present in `spec.md`), not pre-baked CSS dumps.
 
 ## Purpose
 
@@ -41,11 +47,13 @@ Create a comprehensive implementation plan in `.momorph/specs/{screenId}-{screen
 - Understand user stories and acceptance criteria
 - Note technical requirements
 
-**1.2. Load design-style (IMPORTANT for UI planning):**
-- Read `.momorph/specs/{screenId}-{screen_name}/design-style.md`
-- Extract design tokens (colors, typography, spacing)
-- Identify components and their visual specs
-- Note implementation mapping (Figma Node → CSS/Tailwind → Component)
+**1.2. Note Figma references in spec.md:**
+- Inventory the Node IDs already enumerated in `spec.md` Component
+  Behavior section — these are the entry points the implementer will
+  use to fetch visual details on demand.
+- Do NOT fetch full CSS / styling at plan time. The plan describes
+  *which* components are needed and *how they behave*, not their
+  pixel-level appearance.
 
 **1.3. Load constitution:**
 - Read `.momorph/constitution.md`
@@ -211,6 +219,11 @@ If deeper research is needed:
 - **Vertical slices** - Prefer end-to-end feature slices
 - **Test-first ready** - Plan should enable TDD
 - **Link spec and plan** - Cross-reference documents
+- **Behavior-first** — visual/CSS specs are NOT in scope at plan time;
+  reference Figma Node IDs from `spec.md` and let implementation fetch
+  styling on demand via `query_section` / `get_node_context` /
+  `get_media_files`. Do NOT pre-bake colors, typography, spacing, or
+  asset binaries into the plan.
 
 ---
 

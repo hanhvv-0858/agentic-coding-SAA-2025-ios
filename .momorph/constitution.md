@@ -79,6 +79,33 @@ Localization-ready strings MUST flow through `String(localized:)` or
 **Rationale**: HIG compliance is both a quality bar and an App Store submission
 requirement; accessibility-first design prevents costly retrofits.
 
+**No design-fidelity placeholders survive merge.** SF Symbols, system colors
+(`Color(.systemBackground)`, `Color.accentColor`, …), and system fonts as
+stand-ins for branded assets are acceptable ONLY when (1) the Figma design
+itself uses them, or (2) the screen's `spec.md` explicitly approves a
+placeholder phase with a tracked TODO. Any UI that ships with
+"placeholder until X lands" is incomplete by definition — the asset
+download / token extraction MUST be a hard prerequisite of the
+View-build task, not a deferred follow-up. A `design-style.md` for each
+screen (extracted from Figma at `/momorph.specify` time via
+`query_section` / `list_media_nodes` / `get_node_context`) is the
+canonical source for colors, typography, spacing, and asset role hints,
+and MUST exist before `Build *View` tasks begin.
+
+**Visual parity gate (per UI phase, BEFORE the phase is marked done)**:
+1. Render the new/changed screen on simulator (iPhone 17, light + dark).
+2. `xcrun simctl io booted screenshot` and place side-by-side with the
+   Figma frame export.
+3. List every delta. Each delta MUST be either fixed in code OR ticketed
+   with a written rationale (asset blocked on designer, copy pending PM,
+   etc.) — never silently shipped.
+
+**Deferral discipline**: a task may only be marked `⚠️ deferred` when its
+`Blocker:` field declares one of `external-creds`, `external-infra`,
+`pm-decision`. Anything else (e.g. "needs MCP access", "I haven't written
+it yet") is not a valid deferral and MUST block the surrounding phase
+until completed.
+
 ### III. Reactive Data Flow with RxSwift (NON-NEGOTIABLE)
 
 Asynchronous work crossing layer boundaries (network, database, long-running
@@ -96,6 +123,24 @@ thread is forbidden.
 **Rationale**: A single reactive model for async eliminates the Combine/async-
 await/closure mix that fragments testability and makes retry, cancellation, and
 back-pressure reasoning ad-hoc.
+
+**Default actor isolation**: the project sets
+`SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated`. RxSwift schedulers fire on any
+queue, so Domain / Data / Core types MUST be free of implicit `@MainActor`
+inference; Xcode 17's default of `MainActor` here would force every Rx
+subscriber boundary into a static-isolation violation. Concretely:
+
+- Domain entities, use cases, repositories, data sources, stores, the DI
+  container — all written without an actor annotation, picking up
+  `nonisolated` automatically.
+- The SwiftUI bridge layer is the only `@MainActor` surface: `View` bodies
+  get it from the `View` protocol; `*StateAdapter: ObservableObject`
+  classes get it transitively via `@StateObject` / `@Published`.
+- A new class that genuinely needs MainActor (e.g. an SwiftUI-only
+  `ObservableObject` with no Rx subscriptions) MUST annotate `@MainActor`
+  explicitly — do not rely on the default and do not silently flip the
+  project setting back. Decisions to widen the MainActor surface
+  follow the Governance amendment process (§Governance).
 
 ### IV. Test-First Discipline (NON-NEGOTIABLE)
 

@@ -13,7 +13,7 @@ protocol AuthStoring: AnyObject {
     var stateObservable: Observable<AuthState> { get }
 }
 
-final class AuthStore: AuthStoring {
+nonisolated final class AuthStore: AuthStoring {
     let state: BehaviorRelay<AuthState>
 
     var stateObservable: Observable<AuthState> {

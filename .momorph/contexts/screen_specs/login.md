@@ -192,7 +192,7 @@ protocol LoginViewModel {
 
     // Outputs
     var isLoading: Driver<Bool> { get }
-    var selectedLanguage: Driver<AppLanguage> { get }    // "VN" / "JP" / "EN"
+    var selectedLanguage: Driver<AppLanguage> { get }    // v1: "VN" / "EN"
     var errorMessage: Signal<String> { get }
     var navigateHome: Signal<Void> { get }
     var navigateAccessDenied: Signal<Void> { get }

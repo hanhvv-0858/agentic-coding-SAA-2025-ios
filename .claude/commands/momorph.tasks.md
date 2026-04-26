@@ -23,21 +23,25 @@ Read and follow the template structure exactly.
 
 Before creating tasks, ensure these exist:
 - `.momorph/specs/{screenId}-{screen_name}/spec.md` - Feature specification
-- `.momorph/specs/{screenId}-{screen_name}/design-style.md` - Design specifications (for UI tasks)
 - `.momorph/specs/{screenId}-{screen_name}/plan.md` - Implementation plan
+
+**Note on visual specs**: This project uses a **behavior-first** workflow.
+`design-style.md` is intentionally NOT generated. Visual details (colors,
+typography, spacing, asset binaries) are fetched on demand at task-execution
+time via `query_section` / `get_node_context` / `get_media_files` against
+the live Figma file. Tasks that build UI should reference the Figma Node
+IDs already enumerated in `spec.md`.
 
 **⚠️ CRITICAL - MANDATORY VALIDATION**:
 1. **STOP IMMEDIATELY** if any required file is missing
 2. Check existence of ALL files:
    - `.momorph/specs/{screenId}-{screen_name}/spec.md`
-   - `.momorph/specs/{screenId}-{screen_name}/design-style.md`
    - `.momorph/specs/{screenId}-{screen_name}/plan.md`
 3. If ANY file is missing, **DO NOT PROCEED** and feedback to user:
 ```text
 Error: Required design documents missing.
 Please ensure the following files exist in .momorph/specs/{screenId}-{screen_name}/:
 - spec.md
-- design-style.md
 - plan.md
 ```
 
@@ -47,8 +51,9 @@ Create an actionable task list in `.momorph/specs/{screenId}-{screen_name}/tasks
 
 1. **Load design documents**:
   Read from `.momorph/specs/{screenId}-{screen_name}`:
-   - **Required**: plan.md (tech stack, libraries, structure), spec.md (user stories with priorities), design-style.md (UI components, styles).
-   - **Optional**: data-model.md (entities), contracts/ (API endpoints), research.md (decisions), quickstart.md (test scenarios)
+   - **Required**: plan.md (tech stack, libraries, structure), spec.md (user stories with priorities, Figma Node IDs).
+   - **Optional**: data-model.md (entities), contracts/ (API endpoints), research.md (decisions), quickstart.md (test scenarios).
+   - **NOT used at task time**: `design-style.md`. Visual styling is fetched on demand at task-execution time via `query_section` / `get_node_context` against the live Figma file using the Node IDs already in `spec.md`.
    - Note: Not all projects have all documents. Generate tasks based on what's available. If required files are missing, STOP and report.
 
 2. **Execute task generation workflow**:

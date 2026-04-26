@@ -5,7 +5,7 @@
 **File Key**: `9ypp4enmFmdK3YAFJLIu6C`
 **Related screen specs**: [login.md](../../contexts/screen_specs/login.md), [access-denied.md](../../contexts/screen_specs/access-denied.md)
 **Created**: 2026-04-25
-**Status**: Draft
+**Status**: Reviewed (2026-04-25 — pending answers to Open Questions)
 
 ---
 
@@ -112,7 +112,7 @@ re-renders with no residual session.
 ### User Story 3 — Switch interface language (Priority: P2)
 
 A Sunner taps the language chip in the header, picks `Tiếng Việt` or
-`Tiếng Anh` from the sub-sheet, and the entire app re-renders in the
+`Tiếng Anh` from the dropdown, and the entire app re-renders in the
 chosen language. Their choice persists across launches.
 
 **Why this priority**: the SAA programme is bilingual; many Sunners
@@ -126,11 +126,12 @@ in VN.
 **Acceptance Scenarios**:
 
 1. **Given** the user is on Login OR Home (both expose the chip),
-   **When** they tap the language chip, **Then** the LanguagePickerSheet
-   is presented as a modal sheet showing exactly 2 rows
+   **When** they tap the language chip, **Then** the LanguagePickerDropdown
+   is presented as an anchored dropdown card below the chip (matching
+   Figma `[iOS] Language dropdown`) showing exactly 2 rows
    (`Tiếng Việt`, `Tiếng Anh`) with the current selection highlighted.
-2. **Given** the LanguagePickerSheet is open, **When** the user picks
-   the alternative language, **Then** the sheet dismisses, the choice
+2. **Given** the LanguagePickerDropdown is open, **When** the user picks
+   the alternative language, **Then** the dropdown dismisses, the choice
    is persisted to `LocaleStore` (which writes to `UserDefaults` —
    non-sensitive), and every visible text element re-renders in the
    selected language within 250 ms.
@@ -140,6 +141,11 @@ in VN.
 4. **Given** the user picks a language, **When** they cold-launch the
    app, **Then** the chosen language is restored before any UI
    renders.
+5. **Given** the LanguagePickerDropdown is open with the current
+   language already highlighted, **When** the user taps the
+   *currently selected* row, **Then** the dropdown dismisses without
+   re-writing `LocaleStore` (idempotent set) and no re-render is
+   triggered.
 
 ---
 
@@ -167,6 +173,10 @@ return → app shows Home (or whatever tab was active) immediately.
 3. **Given** both tokens have expired (long absence), **When** the
    user returns, **Then** the app routes to Login. Pending deep links
    (if any) are queued and replayed after the next successful sign-in.
+   **Out of scope for this feature**: the deep-link queue policy
+   (queue size, TTL, supported URL schemes vs. universal links) is
+   defined by the navigation/router feature and is referenced — not
+   designed — here.
 
 ---
 
@@ -179,6 +189,19 @@ return → app shows Home (or whatever tab was active) immediately.
   network blip; the URL handler MUST be idempotent (calling
   `exchangeCodeForSession` twice with the same code returns the same
   result or a clean `invalid_grant` error).
+- **App killed mid-OAuth (PKCE verifier loss)**: if the app is
+  terminated between `signInWithOAuth` and the callback URL handler,
+  the in-memory PKCE `code_verifier` is lost. On relaunch, the
+  callback URL MUST be discarded (with an OSLog warning) and the user
+  shown the Login screen. The Supabase SDK is responsible for
+  persisting/managing the verifier; if the SDK chooses to write it to
+  disk, that storage MUST be Keychain (never `UserDefaults`).
+- **Keychain locked (pre-first-unlock)**: with
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, the cached
+  session is unreadable before the device's first unlock after boot.
+  In that window the app MUST treat the state as `signedOut` and show
+  Login; on next foreground after unlock, the cached session is
+  re-checked (no automatic re-prompt for the user).
 - **Token contains email but domain has unicode** (e.g.
   `user@bücker.de`): normalise via NFC + lowercase before comparing
   against the allowlist; v1 allowlist contains only ASCII domains so
@@ -186,6 +209,15 @@ return → app shows Home (or whatever tab was active) immediately.
 - **Background sign-out from another device**: detected on next
   `auth.getSession()` returning null; route to Login without an
   alert.
+- **Stray callback URLs**: the `oauthCallback: PublishRelay<URL>`
+  MUST filter incoming URLs by scheme + host; URLs that do not match
+  the configured `OAUTH_REDIRECT_URL` (e.g. unrelated deep links)
+  are forwarded to `AppRouter` instead of being passed to
+  `exchangeCodeForSession`.
+- **Supabase service unavailable (5xx) on `signInWithOAuth`**:
+  surfaces a localised alert (`auth.error.network`-class message)
+  and the CTA returns to `idle`. No partial session is ever
+  written to Keychain.
 - **Anonymous variant**: not applicable — this feature has no
   anonymous mode (every user must be a real Google account).
 
@@ -201,7 +233,7 @@ return → app shows Home (or whatever tab was active) immediately.
 |-----------|-------------|--------------|
 | `BackgroundImage` (atom) | Full-bleed key-visual; no interaction | — |
 | `BrandLogoSmall` (atom) | Header logo | — |
-| `LanguageSwitcherChip` (molecule) | Header chip showing flag + language code + chevron | Tap → present `LanguagePickerSheet` |
+| `LanguageSwitcherChip` (molecule) | Header chip showing flag + language code + chevron | Tap → present `LanguagePickerDropdown` |
 | `HeroLogo` (atom) | Center brand mark | — |
 | `WelcomeText` (atom, localised) | Two-line welcome copy | — |
 | `GoogleSignInButton` (molecule, primary CTA) | "LOGIN With Google" + Google icon | Tap → start OAuth flow (US1 / US2) |
@@ -223,23 +255,24 @@ return → app shows Home (or whatever tab was active) immediately.
 - **To**: `[iOS] Home` on success (US1), `[iOS] Access denied` on
   disallowed domain (US2).
 - **Sub-sheet**: `[iOS] Language dropdown` (`uUvW6Qm1ve`) — folded into
-  this feature's `LanguagePickerSheet` component.
+  this feature's `LanguagePickerDropdown` component.
 
-### Visual Requirements (iOS / HIG — Principle II)
+### Behavioral Requirements (iOS / HIG — Principle II)
 
-- **Device support**: iPhone (portrait primary). iPad: max width 480 pt
-  centered. iPad landscape: same with content scrolling if needed.
-- **Appearance**: Light + Dark both supported via semantic colors.
+- **Device support**: iPhone portrait is primary. iPad and landscape MUST
+  remain functional (no clipping, no broken layout); concrete responsive
+  breakpoints are an implementation concern.
+- **Appearance**: Light + Dark Mode both supported via semantic colors.
 - **Dynamic Type**: Login welcome copy + button label + AccessDenied
-  title/subtitle/button MUST scale to AX5. Hero logo retains intrinsic
-  size.
-- **Animations**: minimal; OAuth web sheet uses system transition;
-  state-adapter fade < 200 ms. Disable shimmer under
-  `UIAccessibility.isReduceMotionEnabled`.
+  title/subtitle/button MUST scale to AX5 without truncation. Hero logo
+  retains its intrinsic size.
+- **Motion**: any non-essential animation MUST be disabled when
+  `UIAccessibility.isReduceMotionEnabled == true`. The OAuth web sheet
+  uses the system transition (no override).
 - **Accessibility (MANDATORY)**:
   - `accessibilityLabel("Đăng nhập bằng Google")` on the CTA.
   - `accessibilityLabel("Ngôn ngữ hiện tại: ..., nhấn để đổi")` on the chip.
-  - Touch targets ≥ 44×44 pt (CTA height + chip's 44 pt tap area).
+  - All tap targets MUST meet the HIG minimum touch-target size.
   - VoiceOver order: chip → hero → CTA → footer (Login); back → title
     → subtitle → CTA (Access denied).
 - **Localisation**: every user-facing string MUST be a key in
@@ -262,7 +295,7 @@ return → app shows Home (or whatever tab was active) immediately.
 
 | Component | Node ID | Behaviour |
 |-----------|---------|-----------|
-| `LanguageSwitcherChip` | `6885:8976` | **Interaction**: Tap. **Effect**: presents `LanguagePickerSheet` (US3). **Validation**: none. **State**: enabled always (does not depend on auth state). **Accessibility**: announces current language; trait `.isButton`; chip itself wrapped in 44×44 pt tap area. |
+| `LanguageSwitcherChip` | `6885:8976` | **Interaction**: Tap. **Effect**: presents `LanguagePickerDropdown` (US3). **Validation**: none. **State**: enabled always (does not depend on auth state). **Accessibility**: announces current language; trait `.isButton`; chip wrapped in a HIG-minimum tap area. |
 | `GoogleSignInButton` | `6885:8969` | **Interaction**: Tap. **Effect**: dispatches `signInTapped` on `LoginViewModel` (US1, US2). **State transitions**: `idle → loading` while OAuth sheet is presented; `loading → idle` on success/cancel/error. **Disabled** when `isLoading == true`. **Validation**: none. **Accessibility**: trait `.isButton`; replaces leading icon with `ProgressView` while loading. |
 
 ### Access denied screen — `[iOS] Access denied` (`k-7zJk2B7s`)
@@ -272,11 +305,11 @@ return → app shows Home (or whatever tab was active) immediately.
 | `BackIconButton` (in `TopNavigation`) | `6885:9509` | **Interaction**: Tap. **Effect**: emits the same `navigateLogin` signal as the primary button. **State**: always enabled. |
 | `PrimaryButton` "Go back to Home" | `6885:9531` | **Interaction**: Tap. **Effect**: routes to `[iOS] Login` (NOT Home — user is unauthenticated; the label is a known UX mismatch flagged for design re-copy). **Validation**: none. **Accessibility**: trait `.isButton`; hint announces the real destination ("Quay lại màn đăng nhập" / "Returns to sign-in"). |
 
-### LanguagePickerSheet sub-sheet (folded from `[iOS] Language dropdown` `uUvW6Qm1ve`)
+### LanguagePickerDropdown (folded from `[iOS] Language dropdown` `uUvW6Qm1ve`)
 
 | Component | Node ID | Behaviour |
 |-----------|---------|-----------|
-| `LanguagePickerSheet` (new molecule) | n/a (frame-level) | **Interaction**: presented from `LanguageSwitcherChip` tap. **Effect**: 2 rows — `Tiếng Việt`, `Tiếng Anh` — tapping a row sets `LocaleStore.appLanguage` and dismisses. **State**: highlights the currently selected row. **Persistence**: `UserDefaults` key `appLanguage`. **Accessibility**: each row is a separate `.isButton` element; selected row adds `.isSelected`. |
+| `LanguagePickerDropdown` (new molecule) | n/a (frame-level) | **Interaction**: presented from `LanguageSwitcherChip` tap. **Effect**: 2 rows — `Tiếng Việt`, `Tiếng Anh` — tapping a row sets `LocaleStore.appLanguage` and dismisses. **State**: highlights the currently selected row. **Persistence**: `UserDefaults` key `appLanguage`. **Accessibility**: each row is a separate `.isButton` element; selected row adds `.isSelected`. |
 
 ---
 
@@ -295,7 +328,7 @@ Google OAuth.
 | Welcome title / subtitle | `Localizable.xcstrings` | `String` | Bound to `currentLanguage` |
 | CTA label | `Localizable.xcstrings` | `String` | "LOGIN With Google" stays as-is per design (brand requirement) |
 | Footer | `Localizable.xcstrings` | `String` | "Bản quyền thuộc về Sun\* © 2025" |
-| Access denied title / subtitle | `Localizable.xcstrings` | `String` | Title untranslated ("Access Denied") OR localised — confirm with design |
+| Access denied title / subtitle | `Localizable.xcstrings` | `String` | See Open Question Q2 — title localisation pending design decision |
 | Access denied illustration | `Asset Catalog` | image asset `not_found_illustration` (shared with Not Found) | — |
 
 ### Domain entities introduced
@@ -321,7 +354,10 @@ struct AuthSession: Equatable {
 struct AuthUser: Equatable {
     let id: UUID
     let email: String
-    let emailDomain: String      // computed
+    /// Computed deterministically as: substring after the *last* `@`,
+    /// trimmed of whitespace, NFC-normalised, lowercased.
+    /// Used by `CheckEmailDomainUseCase`; never logged.
+    let emailDomain: String
 }
 ```
 
@@ -397,7 +433,7 @@ state.
 | Store | Owns | Producers | Consumers |
 |-------|------|-----------|-----------|
 | `AuthStore` | `AuthState` (`.unknown` / `.signedOut` / `.signedIn(AuthSession)`) | `AuthRepository.observe()` Rx stream | `AppRouter` (decides root), every authenticated screen (gating reads) |
-| `LocaleStore` | `currentLanguage: AppLanguage` | `LanguagePickerSheet` selection | All Views consuming `Localizable.xcstrings` |
+| `LocaleStore` | `currentLanguage: AppLanguage` | `LanguagePickerDropdown` selection | All Views consuming `Localizable.xcstrings` |
 | `AppRouter` | Top-level navigation root (`.login` / `.home` / `.accessDenied`) | `AuthStore` events | Root SwiftUI view |
 
 ### Cache / invalidation
@@ -424,8 +460,8 @@ Cross-checked against [.momorph/constitution.md](../../constitution.md) v1.0.1:
   Views consume only `@Published` state via adapter.
 - **II. SwiftUI-First & HIG**: ✅ — every screen built in SwiftUI;
   Dynamic Type AX5; semantic colours for Light/Dark; localisation
-  via `Localizable.xcstrings`; touch targets ≥ 44×44; VoiceOver
-  walkthrough mandated as a P1 acceptance test.
+  via `Localizable.xcstrings`; HIG-minimum touch targets enforced;
+  VoiceOver walkthrough mandated as a P1 acceptance test.
 - **III. Reactive Data Flow with RxSwift**: ✅ — auth observation,
   OAuth callback handling, language change all flow through
   `Observable`/`Single`/`Signal`; `DisposeBag` per ViewModel; explicit
@@ -482,6 +518,16 @@ Cross-checked against [.momorph/constitution.md](../../constitution.md) v1.0.1:
       feature)
 
 ---
+
+## Open Questions (await PM / design / App Store)
+
+| # | Question | Why it matters | Owner |
+|---|----------|----------------|-------|
+| Q1 | Is **Apple Sign-In** required for v1? App Store §4.8 mandates Apple Sign-In whenever third-party social sign-in is offered. | Decides whether `AuthRepository` ships with a second provider in M1 or only Google. The repo abstraction already accommodates both. | PM + App Store reviewer |
+| Q2 | Final copy for the `accessDenied.primaryButton` (current "Go back to Home" is misleading — user is signed out). Proposed: VN `"Quay lại đăng nhập"`, EN `"Back to sign in"`. **Also**: should `accessDenied.title` stay as the English string `"Access Denied"` or be localised to `"Truy cập bị từ chối"` for VN? | Lock localised strings for `Localizable.xcstrings` before M1 implementation. | Design |
+| Q3 | Deep-link replay policy referenced in US4 AS3 — what URLs are queueable, what is the TTL, and is queue size capped? | Affects router contract; auth feature only consumes `AppRouter.replayPendingLink()`. Spec is fine without an answer; the router feature spec must define it. | Tech lead |
+| Q4 | Do we have to keep the `[iOS] Login` chip on `[iOS] Home` after sign-in (Home spec says yes), or move to a Profile/Settings sheet? | Affects `LocaleStore` consumers and where `LanguagePickerDropdown` is presented from. | PM |
+| Q5 | Production allowlist: confirm `["sun-asterisk.com"]` is final and that no partner domains (e.g. `sun-asterisk.com.vn`, contractor accounts) are needed for v1. | Bundled at compile via `Config/Prod.xcconfig`; widening requires an app release. | PM |
 
 ## Notes
 

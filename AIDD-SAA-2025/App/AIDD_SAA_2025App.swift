@@ -10,7 +10,7 @@ struct AIDD_SAA_2025App: App {
         WindowGroup {
             switch bootstrap {
             case .ready(let container):
-                ContentView()
+                RootView(container: container)
                     .environmentObject(BootstrapEnv(container: container))
             case .failure(let error):
                 BootstrapErrorView(error: error)

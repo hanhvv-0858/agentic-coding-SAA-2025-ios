@@ -8,7 +8,7 @@ protocol AppRouting: AnyObject {
     func reset(to route: AppRoute)
 }
 
-final class AppRouter: AppRouting {
+nonisolated final class AppRouter: AppRouting {
     let root: BehaviorRelay<AppRoute>
 
     var rootObservable: Observable<AppRoute> {

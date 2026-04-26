@@ -8,7 +8,7 @@ protocol LocaleStoring: AnyObject {
     func set(_ language: AppLanguage)
 }
 
-final class LocaleStore: LocaleStoring {
+nonisolated final class LocaleStore: LocaleStoring {
     let language: BehaviorRelay<AppLanguage>
 
     var languageObservable: Observable<AppLanguage> {
