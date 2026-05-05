@@ -7,7 +7,7 @@
 - **Figma / MoMorph URL**: https://momorph.ai/files/9ypp4enmFmdK3YAFJLIu6C
 - **Platform scope**: iOS (SwiftUI) — only `[iOS] …` prefixed frames are in scope for this app
 - **Created**: 2026-04-24
-- **Last Updated**: 2026-04-24
+- **Last Updated**: 2026-04-26
 
 Notes:
 - The Figma file contains both web/admin and iOS designs plus many

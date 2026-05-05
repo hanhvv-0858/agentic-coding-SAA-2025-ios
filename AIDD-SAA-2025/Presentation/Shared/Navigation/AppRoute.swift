@@ -8,7 +8,7 @@ enum AppRoute: Hashable {
     case notifications
     case profileMe(anchor: ProfileAnchor?)
     case profileOther(userId: UUID)
-    case awardDetail(kind: String)
+    case awardDetail(kind: AwardKind)
     case sunKudos
     case allKudos
     case writeKudo(recipientId: UUID?)

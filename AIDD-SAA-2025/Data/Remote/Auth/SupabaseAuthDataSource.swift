@@ -13,6 +13,12 @@ protocol SupabaseAuthDataSource: AnyObject {
     func refreshSession(refreshToken: String) -> Single<AuthSession>
     func signOut() -> Completable
     func currentSession() -> Single<AuthSession?>
+    /// Pushes a session restored from our own Keychain back into the
+    /// Supabase SDK so subsequent PostgREST/Realtime/Storage calls go
+    /// out with `Authorization: Bearer <accessToken>` instead of the
+    /// anon key. Without this step, RLS-protected reads return empty
+    /// even though our `authStore` reports `.signedIn`.
+    func setSDKSession(accessToken: String, refreshToken: String) -> Completable
 }
 
 /// Live data source backed by `supabase-swift` Auth. Bridges the SDK's
@@ -114,6 +120,31 @@ nonisolated final class SupabaseAuthDataSourceImpl: SupabaseAuthDataSource {
                 guard let self else { return }
                 do {
                     try await self.client.auth.signOut()
+                    observer(.completed)
+                } catch {
+                    observer(.error(Self.map(error)))
+                }
+            }
+
+            return Disposables.create { task.cancel() }
+        }
+        .subscribe(on: scheduler)
+    }
+
+    func setSDKSession(accessToken: String, refreshToken: String) -> Completable {
+        Completable.create { [weak self] observer in
+            guard let self else {
+                observer(.completed)
+                return Disposables.create()
+            }
+
+            let task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    _ = try await self.client.auth.setSession(
+                        accessToken: accessToken,
+                        refreshToken: refreshToken
+                    )
                     observer(.completed)
                 } catch {
                     observer(.error(Self.map(error)))

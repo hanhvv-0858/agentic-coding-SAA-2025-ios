@@ -1,8 +1,18 @@
 {
   "images" : [
     {
-      "filename" : "keyvisual_bg.png",
-      "idiom" : "universal"
+      "filename" : "KeyvisualBackground.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "KeyvisualBackground@2x.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "idiom" : "universal",
+      "scale" : "3x"
     }
   ],
   "info" : {

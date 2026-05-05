@@ -10,7 +10,7 @@
 | **Platform** | iOS (SwiftUI) |
 | **Status** | discovered |
 | **Discovered At** | 2026-04-24 |
-| **Last Updated** | 2026-04-24 |
+| **Last Updated** | 2026-04-26 (re-verified via `get_overview`; structure unchanged) |
 
 ---
 

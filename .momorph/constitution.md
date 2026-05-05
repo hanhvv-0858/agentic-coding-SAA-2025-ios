@@ -233,6 +233,57 @@ reliable line of defence.
   - UI tests for touched user stories.
   - SwiftLint with zero violations.
   - Dependency vulnerability scan (e.g. GitHub Dependabot alerts reviewed).
+- **In-phase validation cadence** (added 2026-04-27 after the M2 PR-M2.2
+  iteration where per-task `xcodebuild test` runs caused 30–60 s
+  simulator-launch tax × N tasks and frequently stalled the loop;
+  amended same day to defer full-test runs to end-of-screen):
+  - During implementation of a phase, run **`xcodebuild build-for-testing`**
+    (compile-only, ~15 s) after each task or related-task batch — this
+    catches ~90 % of failures (compile errors, type mismatches, missing
+    imports) cheaply.
+  - At a phase boundary inside a screen, the implementer **MAY** run a
+    targeted subset (`-only-testing:<NewSuites>`) on the suites the
+    phase added/changed — typically <30 s on a pre-booted sim. This is
+    optional, not required.
+  - The full **`xcodebuild test`** is run at one of:
+    1. **End of a screen**: when every Phase under a single
+       `.momorph/specs/<screen>/tasks.md` is `[x]`.
+    2. **End of a screen-cluster**: when several related screens land
+       together (e.g. M2 `Home` + sibling `Notifications`).
+    3. **On explicit user request** ("hãy chạy full test", "run the
+       full suite", etc.).
+  - Per-phase full-suite runs are NOT required and SHOULD be skipped
+    by default. The `build-for-testing` + targeted-subset pattern is
+    sufficient to catch ~95 % of regressions inside a phase; the
+    remaining 5 % surface at the screen-end full run before the
+    cluster ships.
+  - This is a developer-loop optimisation; CI gates are unchanged and
+    still require the full test suite to pass before merge.
+  - Pattern: write task → `build-for-testing` → write next task →
+    `build-for-testing` → … → (phase end: optional targeted subset) →
+    … → (screen end: full `xcodebuild test`).
+  - **Test-run shortcuts** (verified 2026-04-27 during M2 PR-M2.2 —
+    cut full-suite time from ~5 min to ~1.5 min):
+    1. **Pre-boot the simulator once per session**:
+       `xcrun simctl boot "iPhone 17"` — subsequent `xcodebuild test`
+       reuses the booted sim instead of cold-booting (saves ~25 s/run).
+    2. **Disable code coverage on the dev loop**:
+       `xcodebuild test ... -enableCodeCoverage NO` (saves ~5–10 s/run).
+       CI gates re-enable it.
+    3. **Disable concurrent destination testing**:
+       `xcodebuild test ... -disable-concurrent-destination-testing`
+       avoids the per-suite simulator-clone tax.
+    4. **Subset for inner loop**: `-only-testing:AIDD-SAA-2025Tests/<Suite>`
+       runs just the suite touched (~10–20 s vs 1.5 min full).
+  - **Driver vs TestScheduler trap** (lessons from M2 PR-M2.2):
+    `Driver`'s `ConcurrentMainScheduler` async-hops events emitted
+    from non-main schedulers; tests using `Observable<Int>.interval(scheduler: TestScheduler)`
+    + `vm.driver.drive(testObserver)` HANG because the events never
+    reach the observer under `scheduler.start()`. Fix: inject the
+    tick / clock as an `Observable<Void>` parameter — production
+    passes the real `interval`, tests pass a `PublishRelay<Void>`
+    and emit synchronously. M1 `collect(driver.asObservable())`
+    pattern then works without expectation/wait gymnastics.
 - **Definition of Done**:
   - Acceptance scenarios from the feature spec demonstrated on simulator or
     device.

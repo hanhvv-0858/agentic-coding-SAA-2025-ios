@@ -19,24 +19,68 @@ enum AnalyticsEvent {
     case loginDenied(emailDomain: String)
     case loginError(code: String)
 
+    // M2 Home events — per spec TR-007. NO PII allowed: only locale,
+    // unread_count_bucket (`0` / `1-5` / `6+`), award.kind, from/to
+    // tab IDs, placeholder variant.
+    case homeViewed
+    case homeAwardCardTapped(kind: String)
+    case homeKudosDetailTapped
+    case homeBellTapped(unreadBucket: String)
+    case homeFabComposeTapped
+    case homeFabKudosFeedTapped
+    case homeSearchTapped
+    case homeLanguageChanged(locale: String)
+    case homePullToRefresh
+    case homeAboutAwardTapped
+    case homeAboutKudosTapped
+    case homeTabSwitched(from: String, to: String)
+    case homePlaceholderViewed(variant: String)
+
     var name: String {
         switch self {
-        case .loginViewed:        return "login.viewed"
-        case .loginGoogleTapped:  return "login.google_tapped"
-        case .loginSuccess:       return "login.success"
-        case .loginDenied:        return "login.denied"
-        case .loginError:         return "login.error"
+        case .loginViewed:                  return "login.viewed"
+        case .loginGoogleTapped:            return "login.google_tapped"
+        case .loginSuccess:                 return "login.success"
+        case .loginDenied:                  return "login.denied"
+        case .loginError:                   return "login.error"
+        case .homeViewed:                   return "home.viewed"
+        case .homeAwardCardTapped:          return "home.award_card_tap"
+        case .homeKudosDetailTapped:        return "home.kudos_detail_tap"
+        case .homeBellTapped:               return "home.bell_tap"
+        case .homeFabComposeTapped:         return "home.fab.compose_tap"
+        case .homeFabKudosFeedTapped:       return "home.fab.kudos_feed_tap"
+        case .homeSearchTapped:             return "home.search_tap"
+        case .homeLanguageChanged:          return "home.language_changed"
+        case .homePullToRefresh:            return "home.pull_to_refresh"
+        case .homeAboutAwardTapped:         return "home.about_award_tap"
+        case .homeAboutKudosTapped:         return "home.about_kudos_tap"
+        case .homeTabSwitched:              return "home.tab_switch"
+        case .homePlaceholderViewed:        return "home.placeholder.viewed"
         }
     }
 
     var properties: [String: String] {
         switch self {
-        case .loginViewed, .loginGoogleTapped, .loginSuccess:
+        case .loginViewed, .loginGoogleTapped, .loginSuccess,
+             .homeViewed, .homeKudosDetailTapped,
+             .homeFabComposeTapped, .homeFabKudosFeedTapped,
+             .homeSearchTapped, .homePullToRefresh,
+             .homeAboutAwardTapped, .homeAboutKudosTapped:
             return [:]
         case .loginDenied(let domain):
             return ["email_domain": domain]
         case .loginError(let code):
             return ["code": code]
+        case .homeAwardCardTapped(let kind):
+            return ["kind": kind]
+        case .homeBellTapped(let bucket):
+            return ["unread_count_bucket": bucket]
+        case .homeLanguageChanged(let locale):
+            return ["locale": locale]
+        case .homeTabSwitched(let from, let to):
+            return ["from": from, "to": to]
+        case .homePlaceholderViewed(let variant):
+            return ["variant": variant]
         }
     }
 }

@@ -98,8 +98,27 @@ nonisolated final class AuthRepositoryImpl: AuthRepository {
         }
 
         if !session.isExpired {
-            authStore.state.accept(.signedIn(session))
-            return .just(.signedIn(session))
+            // Push the Keychain-restored session into the SDK BEFORE
+            // emitting signedIn. Without this, PostgREST/Realtime calls
+            // go out with the anon key and RLS-protected reads return
+            // empty (silently). `refreshSession()` already sets the SDK
+            // session as a side effect, so we only need this branch.
+            return dataSource.setSDKSession(
+                accessToken: session.accessToken,
+                refreshToken: session.refreshToken
+            )
+            .andThen(Single.deferred { [weak self] in
+                self?.authStore.state.accept(.signedIn(session))
+                return .just(.signedIn(session))
+            })
+            .catch { [weak self] _ -> Single<AuthState> in
+                // SDK rejected the restored tokens — treat as signed-out.
+                guard let self else { return .just(.signedOut) }
+                Log.auth.info("SDK rejected restored session — clearing cache")
+                try? self.sessionStorage.delete()
+                self.authStore.state.accept(.signedOut)
+                return .just(.signedOut)
+            }
         }
 
         // US4 silent refresh: access expired, but refresh token may

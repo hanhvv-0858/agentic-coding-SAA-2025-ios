@@ -9,12 +9,14 @@ final class MockSupabaseAuthDataSource: SupabaseAuthDataSource {
     var refreshResult: Single<AuthSession> = .never()
     var signOutResult: Completable = .empty()
     var currentSessionResult: Single<AuthSession?> = .just(nil)
+    var setSDKSessionResult: Completable = .empty()
 
     private(set) var signInCalls = 0
     private(set) var exchangeCalls: [URL] = []
     private(set) var refreshCalls: [String] = []
     private(set) var signOutCalls = 0
     private(set) var currentSessionCalls = 0
+    private(set) var setSDKSessionCalls: [(accessToken: String, refreshToken: String)] = []
 
     func signInWithGoogle() -> Single<AuthSession> {
         signInCalls += 1
@@ -39,6 +41,11 @@ final class MockSupabaseAuthDataSource: SupabaseAuthDataSource {
     func currentSession() -> Single<AuthSession?> {
         currentSessionCalls += 1
         return currentSessionResult
+    }
+
+    func setSDKSession(accessToken: String, refreshToken: String) -> Completable {
+        setSDKSessionCalls.append((accessToken, refreshToken))
+        return setSDKSessionResult
     }
 }
 
